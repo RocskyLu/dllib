@@ -9,3 +9,4 @@
 @Version: 0.1
 @Description:
 """
+from .quant import quant_torch, quant_onnx
