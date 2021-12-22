@@ -1,0 +1,105 @@
+name: demo
+train_params:
+  start_epoch: 1
+  end_epoch: 3
+  val_interval: 1
+  eval_interval: 1
+  checkpoint_interval: 1
+  step_interval: 50000
+  log_interval: 10
+  debug_interval: 20
+  global_params:
+    bn_momentum: 0.01
+    bn_epsilon: 0.00001
+    align_corners: False
+  cache_dir: ./temp
+  use_cuda: True
+  use_amp: True
+  gpu_list:
+    - '0'
+    - '1'
+  parallel: True
+  distributed: True
+  use_sync_batch: True
+  resume: False
+  loss_ratios:
+    reg: 0.0
+    l1: 1.0
+  loss_acc:
+    - l1
+  prefix: demo
+
+train_dataset_params:
+  train_batch: 8
+  val_batch: 8
+  num_workers: 4
+
+evaluate_params:
+  use_cuda: True
+  gpu_list:
+      - '1'
+  resume: 11
+  metric_names:
+    - sad
+    - mad
+    - grd
+    - con
+  prefix: matte
+  cache_dir: /media/data/logs
+
+evaluate_dataset_params:
+  root: /media/data/datasets/ImageMatting
+  eval_size:
+    - 480
+    - 270
+  num_workers: 1
+  eval_sets:
+    - blend_fore
+  eval_phases:
+    - val
+  eval_batch: 1
+
+export_params:
+  prefix: matte
+  cache_dir: /media/data/logs
+  save_path: ./matte/models
+  resume: 0
+  input_names:
+    - image
+  input_shapes:
+    -
+      - 1
+      - 224
+      - 384
+      - 3
+  output_names:
+    - alpha
+
+predict_params:
+  backend: torch
+  use_cuda: True
+  gpu_list:
+      - '1'
+  resume: 11
+  size:
+    - 480
+    - 270
+  prefix: matte
+  cache_dir: /media/data/logs
+
+model_params:
+
+optimizer_params:
+  optimizer:
+    arch: Adam
+    params:
+      lr: 0.0001
+      betas:
+        - 0.5
+        - 0.999
+      weight_decay: 0.0
+  scheduler:
+    arch: StepLR
+    params:
+      step_size: 2
+      gamma: 0.1

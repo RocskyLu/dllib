@@ -20,7 +20,7 @@ LEVEL = {
 }
 
 FORMATTER = {
-    'info': logging.Formatter(''),
+    'info': logging.Formatter('%(asctime)s - %(levelname)s: %(message)s'),
     'debug': logging.Formatter('%(asctime)s - %(levelname)s: %(message)s'),
     'error': logging.Formatter(''),
 }

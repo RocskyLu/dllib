@@ -10,26 +10,27 @@
 @Description:
 """
 import os
-from typing import Union, Optional
+import time
+from copy import deepcopy
+from typing import List, Dict, Union, Optional
 import torch
 import torch.nn as nn
 import torch.distributed as dist
 import torch.multiprocessing as mp
 from torch.nn.parallel import DistributedDataParallel
+from torch.cuda.amp import GradScaler
 from torch.utils.tensorboard import SummaryWriter
-from configs import global_config as gfg
-from utils.acc_utils import AccRecords
-from utils.log_utils import LogUtils
-from utils.checkpoint_utils import CheckpointUtils
+from dllib.configs.global_config import cfg as gfg
+from dllib.utils.acc_utils import AccRecords
+from dllib.utils.checkpoint_utils import CheckpointUtils
 
 
 class Trainer(object):
     def __init__(self,
-                 train_params: dict,
-                 model_params: dict,
-                 optimizer_params: dict,
-                 dataset_params: dict
-                 ):
+                 train_params: Dict,
+                 model_params: Dict,
+                 optimizer_params: Dict,
+                 dataset_params: Dict):
         """
         Init a basic trainer
         :param train_params: dict
@@ -65,32 +66,35 @@ class Trainer(object):
         self.prefix = self.train_params['prefix']
         self.version = self.train_params['version']
 
-        log_dir = os.path.join(self.cache_dir, self.prefix, self.version, 'logs')
-        self.log = LogUtils(log_dir, self.prefix, 'info').get_logger()
-        self.log.info(self.train_params)
-        self.log.info(self.model_params)
-        self.log.info(self.optimizer_params)
-        self.log.info(self.dataset_params)
+        self.log_dir = os.path.join(self.cache_dir, self.prefix, self.version, 'logs')
+        self.log = None
 
-        checkpoint_dir = os.path.join(self.cache_dir, self.prefix, self.version, 'checkpoints')
-        self.checkpoint = CheckpointUtils(checkpoint_dir)
+        self.checkpoint_dir = os.path.join(self.cache_dir, self.prefix, self.version, 'checkpoints')
+        self.checkpoint = CheckpointUtils(self.checkpoint_dir)
 
         self.debug_dir = os.path.join(self.cache_dir, self.prefix, self.version, 'debugs')
         if not os.path.exists(self.debug_dir):
             os.makedirs(self.debug_dir, exist_ok=True)
+
         self.writer_dir = os.path.join(self.cache_dir, self.prefix, self.version, 'writers')
         if not os.path.exists(self.writer_dir):
             os.makedirs(self.writer_dir, exist_ok=True)
+        self.writer = None
 
         self.model = None
         self.optimizer = None
         self.scheduler = None
         self.criterion = None
-        self.train_data_loader = None
-        self.val_data_loader = None
+        self.train_dataset = None
+        self.val_dataset = None
+        self.train_sampler = None
+        self.val_sampler = None
+        self.train_loader = None
+        self.val_loader = None
+        self.scaler = None
         self.start_epoch = 1
         self.start_step = 0
-        self.writer = None
+        self.val_losses = []
 
     def load_model(self):
         raise NotImplementedError
@@ -101,29 +105,35 @@ class Trainer(object):
     def load_scheduler(self):
         raise NotImplementedError
 
-    def load_data_loader(self, rank):
+    def load_data_loader(self, rank: Union[int, str], world_size: Optional[int]):
         raise NotImplementedError
 
     def load_criterion(self):
         raise NotImplementedError
 
-    def train_on_step(self, inputs, targets, rank: Union[int, str]):
+    def train_on_step(self, inputs: Dict, targets: Dict, rank: Union[int, str]):
         raise NotImplementedError
 
-    def val_on_step(self, inputs, targets, rank: Union[int, str]):
+    def val_on_step(self, inputs: Dict, targets: Dict, rank: Union[int, str]):
+        raise NotImplementedError
+
+    def debug(self, epoch: int, step: int, inputs: Dict, targets: Dict, preds: List, losses: Dict, mode: str):
         raise NotImplementedError
 
     def train_on_epoch(self, epoch: int, rank: Union[int, str]):
         losses_acc = AccRecords(self.loss_names)
-        if rank in ['cpu', 'cuda', 'dp', 0]:
+        if rank in ['cpu', 'cuda', 0]:
             self.log.info('Epoch: %d, Rank: %s, Lr: %.8f' % (epoch, rank, self.get_lr()))
+        if self.distributed:
+            self.train_sampler.set_epoch(epoch)
         train_len = len(self.train_loader)
         for step, (inputs, targets) in enumerate(self.train_loader, start=1):
             losses, preds = self.train_on_step(inputs, targets, rank)
             losses_acc.update_loss(losses)
-            if rank in ['cpu', 'cuda', 'dp', 0]:
+            if rank in ['cpu', 'cuda', 0]:
                 if step % self.train_params['log_interval'] == 0:
                     self.log.info('[%d/%d]%s' % (step, train_len, str(losses_acc)))
+                    # print('[%d/%d]%s' % (step, train_len, str(losses_acc)))
                 if self.train_params['debug_interval'] > 0 and step % self.train_params['debug_interval'] == 0:
                     self.debug(epoch, step, inputs, targets, preds, losses, 'train')
 
@@ -131,14 +141,16 @@ class Trainer(object):
         self.model.eval()
         losses_acc = AccRecords(self.loss_names)
         with torch.no_grad():
-            for step, (inputs, targets) in enumerate(self.val_loader):
+            for step, (inputs, targets) in enumerate(self.val_loader, start=1):
                 losses, preds = self.val_on_step(inputs, targets, rank)
                 losses_acc.update_loss(losses)
-                if rank in ['cpu', 'cuda', 'dp', 0]:
+                if rank in ['cpu', 'cuda', 0]:
                     if self.train_params['debug_interval'] > 0 and step % self.train_params['debug_interval'] == 0:
                         self.debug(epoch, step, inputs, targets, preds, losses, 'val')
-        if rank in ['cpu', 'cuda', 'dp', 0]:
+        if rank in ['cpu', 'cuda', 0]:
             self.log.info('[Validation]%s' % str(losses_acc))
+            val_loss = losses_acc.results()['total']
+            self.val_losses.append(val_loss)
         self.model.train()
 
     def eval_on_epoch(self, epoch: int, rank: Union[int, str]):
@@ -146,11 +158,8 @@ class Trainer(object):
 
     def train(self):
         if self.use_cuda:
-            if self.parallel:
-                if self.distributed:
-                    mp.spawn(self._train, args=(len(self.gpu_list),), nprocs=len(self.gpu_list), join=True)
-                else:
-                    self._train('dp')
+            if self.parallel and self.distributed:
+                mp.spawn(self._train, args=(len(self.gpu_list),), nprocs=len(self.gpu_list), join=True)
             else:
                 self._train('cuda')
         else:
@@ -159,22 +168,43 @@ class Trainer(object):
     def _train(self, rank, world_size=Optional[int]):
         if isinstance(rank, int):
             self.setup(rank, world_size)
+        if rank in ['cpu', 'cuda', 0]:
+            # log and writer can not be pickled across processes
+            import logging
+
+            timestamp = time.strftime('%Y%m%d-%H%M%S')
+            logging.basicConfig(format='%(asctime)s - %(levelname)s: %(message)s',
+                                level=logging.INFO,
+                                filename=os.path.join(self.log_dir, 'log_%s_%s.log' % (self.prefix, timestamp)),
+                                filemode='a')
+            self.log = logging
+            self.log.info(self.train_params)
+            self.log.info(self.model_params)
+            self.log.info(self.optimizer_params)
+            self.log.info(self.dataset_params)
+            self.writer = SummaryWriter(self.writer_dir)
         self.load_model()
+        self.load_criterion()
         self.load_optimizer()
         self.load_scheduler()
+        self.load_data_loader(rank, world_size)
+        self.scaler = GradScaler() if self.use_amp else None
         if self.resume:
             weights, kwargs = self.checkpoint.load(self.resume)
-            if kwargs['step'] == 0:
-                self.start_epoch = kwargs['epoch'] + 1
-            else:
-                self.start_epoch = kwargs['epoch']
-            self.start_step = kwargs['step']
+            if kwargs['epoch'] and kwargs['step']:
+                if kwargs['step'] == 0:
+                    self.start_epoch = kwargs['epoch'] + 1
+                else:
+                    self.start_epoch = kwargs['epoch']
+                self.start_step = kwargs['step']
             self.model.load_state_dict(weights['model_weights'], strict=True)
             self.optimizer.load_state_dict(weights['optim_weights'])
+            for state in self.optimizer.state.values():
+                for k, v in state.items():
+                    if isinstance(v, torch.Tensor):
+                        state[k] = v.to(rank)
         self.model = self.model.to(rank)
-        if rank in ['cpu', 'cuda', 'dp', 0]:
-            self.writer = SummaryWriter(self.writer_dir)
-        if rank == 'dp':
+        if rank == 'cuda' and len(self.gpu_list) > 1:
             self.model = nn.DataParallel(self.model, device_ids=list(range(len(self.gpu_list))))
         elif isinstance(rank, int):
             if self.use_sync_batch:
@@ -182,21 +212,28 @@ class Trainer(object):
             self.model = DistributedDataParallel(self.model, device_ids=[rank])
         self.model.train()
 
-        self.train_data_loader, self.val_data_loader = self.load_data_loader(rank)
         for epoch in range(self.start_epoch, self.train_params['end_epoch'] + 1):
             self.train_on_epoch(epoch, rank)
-            if rank == 0:
-                if epoch % self.train_params['val_interval'] == 0:
-                    self.val_on_epoch(epoch, rank)
-                if epoch % self.train_params['eval_interval'] == 0:
-                    self.eval_on_epoch(epoch, rank)
+
+            if epoch % self.train_params['val_interval'] == 0:
+                self.val_on_epoch(epoch, rank)
+            if epoch % self.train_params['eval_interval'] == 0:
+                self.eval_on_epoch(epoch, rank)
+
+            if rank in ['cpu', 'cuda', 0]:
                 if epoch % self.train_params['checkpoint_interval'] == 0:
-                    if rank in ['cpu', 'cuda', 'dp', 0]:
-                        if rank in ['dp', 0]:
-                            model_weights = self.model.module.state_dict()
-                        else:
-                            model_weights = self.model.state_dict()
-                        optim_weights = self.optimizer.state_dict()
+                    if rank in ['cuda', 0] and len(self.gpu_list) > 1:
+                        model_weights = deepcopy(self.model.module.state_dict())
+                    else:
+                        model_weights = deepcopy(self.model.state_dict())
+                    optim_weights = deepcopy(self.optimizer.state_dict())
+                    for k, v in model_weights.items():
+                        if isinstance(v, torch.Tensor):
+                            model_weights[k] = v.to('cpu')
+                    for state in optim_weights['state'].values():
+                        for k, v in state.items():
+                            if isinstance(v, torch.Tensor):
+                                state[k] = v.to('cpu')
                     weights = {'model_weights': model_weights, 'optim_weights': optim_weights}
                     self.checkpoint.save(weights, **{'loss': self.val_losses[-1], 'epoch': epoch, 'step': 0})
             self.scheduler.step()

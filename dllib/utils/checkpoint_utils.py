@@ -51,7 +51,7 @@ class CheckpointUtils(object):
                               (timestamp, kwargs['epoch'], kwargs['step'], kwargs['loss'], self.best_path)])
 
         if self.cache[self.count % self.keep]:
-            os.system('rm %s' % save_path)
+            os.system('rm %s' % self.cache[self.count % self.keep])
         self.cache[self.count % self.keep] = save_path
         self.count += 1
 
@@ -59,14 +59,18 @@ class CheckpointUtils(object):
         if resume == 'latest':
             with open(os.path.join(self.save_root, 'latest.txt'), 'r') as f:
                 record = f.readlines()[-1].strip()
-            save_path = record.split(',')[4].split(':')[-1]
+            load_path = record.split(',')[4].split(':')[-1]
             epoch = int(record.split(',')[1].split(':')[-1])
             step = int(record.split(',')[2].split(':')[-1])
         elif resume == 'best':
             with open(os.path.join(self.save_root, 'latest.txt'), 'r') as f:
                 record = f.readlines()[-1].strip()
-                save_path = record.split(',')[4].split(':')[-1]
+                load_path = record.split(',')[4].split(':')[-1]
                 epoch = int(record.split(',')[1].split(':')[-1])
                 step = int(record.split(',')[2].split(':')[-1])
-        weights = torch.load(save_path)
+        else:
+            load_path = resume
+            epoch = None
+            step = None
+        weights = torch.load(load_path)
         return weights, {'epoch': epoch, 'step': step}
