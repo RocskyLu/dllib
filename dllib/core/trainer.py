@@ -67,6 +67,8 @@ class Trainer(object):
         self.version = self.train_params['version']
 
         self.log_dir = os.path.join(self.cache_dir, self.prefix, self.version, 'logs')
+        if not os.path.exists(self.log_dir):
+            os.makedirs(self.log_dir, exist_ok=True)
         self.log = None
 
         self.checkpoint_dir = os.path.join(self.cache_dir, self.prefix, self.version, 'checkpoints')
