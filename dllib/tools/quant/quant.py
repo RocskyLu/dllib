@@ -4,7 +4,7 @@
 """
 @Time: 2021/7/16 下午3:59  
 @Author: Rocsky
-@Project: depoly
+@Project: dllib
 @File: quant.py
 @Version: 0.1
 @Description:

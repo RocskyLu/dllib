@@ -5,7 +5,7 @@
 @Time: 2021/12/20 下午3:38  
 @Author: Rocsky
 @Project: dllib
-@File: __init__.py.py
+@File: __init__.py
 @Version: 0.1
 @Description:
 """

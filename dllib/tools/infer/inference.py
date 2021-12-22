@@ -4,7 +4,7 @@
 """
 @Time: 2021/7/16 上午10:57  
 @Author: Rocsky
-@Project: depoly
+@Project: dllib
 @File: inference.py
 @Version: 0.1
 @Description:
