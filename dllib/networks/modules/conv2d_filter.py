@@ -4,7 +4,7 @@
 """
 @Time: 2021/9/14 下午5:21  
 @Author: Rocsky
-@Project: ailib
+@Project: dllib
 @File: conv2d_filter.py
 @Version: 0.1
 @Description:

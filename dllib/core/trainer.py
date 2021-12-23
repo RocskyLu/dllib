@@ -170,6 +170,7 @@ class Trainer(object):
     def _train(self, rank, world_size=Optional[int]):
         if isinstance(rank, int):
             self.setup(rank, world_size)
+        print(torch.cuda.current_device())
         if rank in ['cpu', 'cuda', 0]:
             # log and writer can not be pickled across processes
             import logging
@@ -257,9 +258,14 @@ class Trainer(object):
 
     @staticmethod
     def setup(rank: int, world_size: int):
-        os.environ['MASTER_ADDR'] = gfg.MASTER_ADDR
-        os.environ['MASTER_PORT'] = gfg.MASTER_PORT
-        dist.init_process_group(gfg.MASTER_BACKEND, rank=rank, world_size=world_size)
+        # os.environ['MASTER_ADDR'] = gfg.MASTER_ADDR
+        # os.environ['MASTER_PORT'] = gfg.MASTER_PORT
+
+        dist.init_process_group(gfg.MASTER_BACKEND, init_method='tcp://192.168.22.229:12345', rank=rank,
+                                world_size=world_size)
+        torch.cuda.set_device(rank)
+        print(rank, torch.distributed.get_rank())
+        print(torch.distributed.get_world_size())
 
     @staticmethod
     def cleanup():

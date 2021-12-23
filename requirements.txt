@@ -1,0 +1,10 @@
+geffnet==1.0.0
+kornia==0.4.1
+numpy==1.19.5
+onnx==1.9.0
+onnxruntime==1.8.0
+opencv_python==3.4.8.29
+PyYAML==6.0
+setuptools==54.1.1
+torch==1.7.1+cu101
+torchvision==0.8.2+cu101

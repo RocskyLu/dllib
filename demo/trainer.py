@@ -69,8 +69,8 @@ class DemoTrainer(Trainer):
         self.scheduler = SCHEDULER[scheduler_params['arch']](self.optimizer, **scheduler_params['params'])
 
     def load_data_loader(self, rank: Union[int, str], world_size: Optional[int]):
-        self.train_dataset = DemoDataset(16)
-        self.val_dataset = DemoDataset(16)
+        self.train_dataset = DemoDataset(1600)
+        self.val_dataset = DemoDataset(320)
         self.train_sampler = DistributedSampler(self.train_dataset,
                                                 num_replicas=world_size,
                                                 rank=rank,

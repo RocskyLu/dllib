@@ -4,7 +4,7 @@
 """
 @Time: 2021/7/16 下午2:11  
 @Author: Rocsky
-@Project: depoly
+@Project: dllib
 @File: torch2onnx.py
 @Version: 0.1
 @Description:

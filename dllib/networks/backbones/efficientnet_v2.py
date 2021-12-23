@@ -4,7 +4,7 @@
 """
 @Time: 2021/6/16 下午5:25
 @Author: Rocsky
-@Project: ailib
+@Project: dllib
 @File: efficientnet_v2.py
 @Version: 0.1
 @Description:
